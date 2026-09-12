@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Spine verification</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; max-width: 1000px; color: #222; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0 16px; }
+  th, td { border: 1px solid #ccc; padding: 3px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+  th { background: #f4f4f4; }
+  .pass { color: #0a0; font-weight: 600; } .fail { color: #c00; font-weight: 600; }
+  /* A defect that is measured, diagnosed and recorded: no worse than its
+     baseline, so not a failure, but not a pass either. It must not read as
+     green -- the whole point is that it stays visible. */
+  .warn { color: #b60; font-weight: 600; }
+  canvas { border: 1px solid #ccc; image-rendering: pixelated; vertical-align: top; margin-right: 8px; }
+  pre { background: #f7f7f7; padding: 8px; overflow-x: auto; }
+  .note { color: #666; }
+  details { margin: 12px 0 18px; padding: 8px 12px; background: #fafafa; border: 1px solid #e2e2e2; border-radius: 4px; }
+  summary { cursor: pointer; font-weight: 600; }
+  table.picker { margin: 10px 0; }
+  table.picker th { text-align: right; vertical-align: top; white-space: nowrap; }
+  table.picker td { text-align: left; }
+  .pick { display: inline-block; margin: 1px 10px 1px 0; white-space: nowrap; font-variant-numeric: normal; }
+  .pick.on { background: #fff3c4; border-radius: 3px; padding: 0 3px; }
+  .pick a { color: #06c; text-decoration: none; }
+  .pick a:hover { text-decoration: underline; }
+  button { font: inherit; padding: 3px 12px; cursor: pointer; }
+</style>
+<h1>Spine verification</h1>
+<p class="note">
+  Tone, geometry and shim checks for every method and every spine module. Each section states
+  what it predicts before it measures, so a number that moves says which part moved. Tests live
+  in <code>tests/</code>, one module per method or shim; this page only paints their output.
+  Append <code>?only=circlePacking,spine.geodesic</code> to run a subset, or use the
+  picker below — it is generated from the harness's own section list, so it cannot
+  fall out of step with it.
+</p>
+<div id="sections"></div>
+<div id="out">Running…</div>
+
+<script>
+  // A CLASSIC script, deliberately: it still runs when the module graph does
+  // not. Opened from the filesystem, every `import` here is CORS-blocked before
+  // a line of our code executes, so the page sits on "Running…" for ever with
+  // nothing in it to explain why. This is the only place that can say so.
+  if (location.protocol === 'file:') {
+    document.getElementById('out').innerHTML =
+      '<p class="fail">This page has to be served over HTTP, not opened from disk.</p>' +
+      '<p class="note">ES module imports are blocked over <code>file://</code>, so none of ' +
+      'the harness can load. Start the bundled server:</p>' +
+      '<pre>powershell -ExecutionPolicy Bypass -File serve.ps1</pre>' +
+      '<p class="note">then open <a href="http://localhost:8080/verify.html">' +
+      'http://localhost:8080/verify.html</a>.</p>';
+  }
+</script>
+<script type="module" src="./tests/report.js"></script>

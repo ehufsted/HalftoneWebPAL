@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HalftoneWebPAL</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #404040; --panel: #303030; --line: #ababff; --text: #e6e7ea;
+    --dim: #ffffff; --accent: #ababff; --warn: #e39820; --bad: #e06c75;
+    --pad: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    padding: 8px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 12px; flex: 0 0 auto;
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  main { flex: 1 1 auto; display: flex; min-height: 0; }
+
+  aside {
+    width: 340px; flex: 0 0 340px; border-right: 1px solid var(--line);
+    overflow-y: auto; padding: var(--pad); background: var(--panel);
+  }
+  fieldset {
+    border: 1px solid var(--line); border-radius: 6px;
+    margin: 0 0 12px; padding: 8px 10px 10px;
+  }
+  legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; padding: 0 4px; }
+
+
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { flex: 0 0 110px; color: var(--dim); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row .val { flex: 0 0 62px; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=number], select {
+    background: #12131a; color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 3px 6px; font: inherit; width: 100%;
+  }
+  input[type=number] { width: 80px; }
+  button {
+    background: #262933; color: var(--text); border: 1px solid var(--line);
+    border-radius: 5px; padding: 6px 10px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #30343f; }
+  button.primary { background: var(--accent); color: #10131a; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  .buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  #drop {
+    border: 1px dashed var(--line); border-radius: 6px; padding: 14px;
+    text-align: center; color: var(--dim); cursor: pointer;
+  }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  .samples { display: flex; gap: 6px; margin-top: 8px; }
+  .samples button { flex: 1 1 0; padding: 4px; font-size: 12px; }
+
+  section.preview {
+    flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  }
+  .viewbar {
+    display: flex; gap: 6px; align-items: center;
+    padding: 6px 10px; border-bottom: 1px solid var(--line); flex: 0 0 auto;
+  }
+  .viewbar .spacer { flex: 1 1 auto; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 4px 10px; }
+  .seg button[aria-pressed=true] { background: var(--accent); color: #10131a; font-weight: 600; }
+  label.check { color: var(--dim); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+
+  .stage {
+    flex: 1 1 auto; min-height: 0; display: grid; place-items: center;
+    padding: 14px; overflow: auto; background:
+      repeating-conic-gradient(#191b21 0% 25%, #1d1f26 0% 50%) 50% / 16px 16px;
+  }
+  .canvaswrap { position: relative; box-shadow: 0 2px 18px #0008; background: #fff; }
+  .canvaswrap canvas { display: block; }
+  #overlay { position: absolute; inset: 0; pointer-events: none; }
+
+  footer {
+    flex: 0 0 auto; border-top: 1px solid var(--line); padding: 6px 12px;
+    display: flex; gap: 18px; align-items: center; color: var(--dim);
+    font-variant-numeric: tabular-nums; font-size: 12px; flex-wrap: wrap;
+  }
+  footer b { color: var(--text); font-weight: 600; }
+  #status { margin-left: auto; }
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  .note { color: var(--dim); font-size: 11px; margin: 6px 0 0; }
+  /* .note carries a top margin for the sidebar paragraphs; in the flex footer
+     that pushes the text off the baseline of the stats beside it. */
+  footer .note { margin: 0; }
+
+  /* ----------------------------------------------------------- style browser
+     A grid of tiles over the whole viewport rather than a panel in the sidebar:
+     340px gives three tiny columns and a very long scroll, and the drawing is
+     what the tiles are competing with anyway. */
+  #styles[hidden] { display: none; }
+  #styles {
+    position: fixed; inset: 0; z-index: 10;
+    background: #0b0c10ee; display: flex; flex-direction: column;
+  }
+  .styles-bar {
+    flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+  }
+  .styles-bar h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .styles-bar .spacer { flex: 1 1 auto; }
+  .styles-body { flex: 1 1 auto; overflow-y: auto; padding: 14px; }
+  .styles-body h3 {
+    margin: 14px 0 8px; font-size: 11px; font-weight: 600; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .07em;
+  }
+  .styles-body h3:first-child { margin-top: 0; }
+  .tiles {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  }
+  .tile {
+    background: #1c1e25; border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px; cursor: pointer; text-align: left; color: var(--text);
+    font: inherit; display: block;
+  }
+  .tile:hover { border-color: var(--accent); }
+  .tile[aria-pressed=true] { border-color: var(--accent); background: #23293a; }
+  /* No aspect-ratio here: a canvas stretches its bitmap to the element box and
+     object-fit does not apply to it, so forcing a square would distort every
+     tile. `requestThumbs` sizes the empty canvases to the image's aspect up
+     front, which keeps the grid from reflowing as tiles arrive. */
+  .tile canvas {
+    display: block; width: 100%; height: auto;
+    background: #fff; border-radius: 3px;
+  }
+  .tile .name {
+    display: block; margin-top: 5px; font-size: 11px; line-height: 1.25;
+    color: var(--dim);
+  }
+  .tile[aria-pressed=true] .name { color: var(--text); }
+  .tile.pending canvas { background: #2a2d36; }
+  .tile.failed canvas { background: #3a2426; }
+
+  /* ---------------------------------------------------------------- narrow
+     Below this the 340px sidebar leaves no stage worth looking at, so the two
+     panes stack instead of sitting side by side.
+
+     THE WHOLE PAGE SCROLLS HERE, rather than each pane scrolling inside a fixed
+     viewport. The desktop layout pins the body to the viewport height and lets
+     the sidebar and the stage scroll independently; at this width there is no
+     room for two scroll areas, and nesting them makes the controls nearly
+     unreachable on a touch screen.
+
+     That has a consequence worth stating, because it is not obvious: once the
+     body height is auto, the flex chain body > main > section > .stage no longer
+     resolves to a definite height, and `.stage` — a grid with place-items:center
+     — collapses to nothing. It gets an explicit height below. `paint()` reads
+     clientWidth/clientHeight to fit the canvas, so it needs a real box either
+     way, and it already re-runs on resize. */
+  @media (max-width: 760px) {
+    html, body { height: auto; }
+    body { overflow: auto; }
+    main { flex-direction: column; }
+
+    /* Preview first. The drawing is what the app is, and a phone shows about one
+       screenful at a time — the controls mean nothing until something is on the
+       page to apply them to. DOM order stays sidebar-first so the desktop
+       layout and the tab order are unchanged. */
+    section.preview { order: 0; }
+    aside { order: 1; }
+
+    aside {
+      width: auto; flex: 0 0 auto;
+      border-right: 0; border-top: 1px solid var(--line);
+      overflow-y: visible;
+    }
+
+    .stage { height: 60vh; min-height: 240px; }
+    .viewbar { flex-wrap: wrap; }
+    .viewbar .spacer { display: none; }
+
+    /* The label column is sized for a 340px panel; at 360px it crowds the
+       slider off the row. */
+    .row label { flex: 0 0 92px; }
+    .row .val { flex: 0 0 52px; }
+
+    header { position: sticky; top: 0; z-index: 2; background: var(--bg); }
+    footer { gap: 6px 14px; }
+    #status { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>HalftoneWebPAL</h1>
+  <span class="sub">image &rarr; constant-width strokes &rarr; plottable SVG</span>
+</header>
+
+<main>
+  <aside>
+    <fieldset>
+      <legend>Image</legend>
+      <div id="drop">Drop an image, or click to choose</div>
+      <input type="file" id="file" accept="image/*" hidden>
+      <div class="samples">
+        <button data-sample="sphere">Sphere</button>
+        <button data-sample="ramp">Ramp</button>
+        <button data-sample="rings">Rings</button>
+        <button data-sample="rhino">Rhino</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Paper &amp; pen</legend>
+      <div class="row">
+        <label for="paper">Paper</label>
+        <select id="paper">
+          <option value="10">10 cm wide</option>
+          <option value="14.8">A6 · 14.8 cm</option>
+          <option value="21" selected>A5 · 21 cm</option>
+          <option value="29.7">A4 · 29.7 cm</option>
+          <option value="42">A3 · 42 cm</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="penWidth">Pen width</label>
+        <select id="penWidth">
+          <option value="0.2">0.2 mm</option>
+          <option value="0.3">0.3 mm (Micron 01)</option>
+          <option value="0.5" selected>0.5 mm (gel)</option>
+          <option value="0.7">0.7 mm</option>
+          <option value="1.0">1.0 mm</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="pxPerCm">Detail</label>
+        <input type="range" id="pxPerCm" min="10" max="80" step="1" value="30">
+        <span class="val" id="pxPerCmVal">30</span>
+      </div>
+      <p class="note">Detail is pixels per cm — the resolution the method works at.</p>
+    </fieldset>
+
+    <fieldset class="tone">
+      <legend>Tone</legend>
+      <div class="row">
+        <label for="gamma">Gamma</label>
+        <input type="range" id="gamma" min="0.4" max="3" step="0.05" value="1.4">
+        <span class="val" id="gammaVal">1.40</span>
+      </div>
+      <div class="row">
+        <label for="rSmooth">Smoothing</label>
+        <input type="range" id="rSmooth" min="0" max="6" step="0.1" value="1.5">
+        <span class="val" id="rSmoothVal">1.5</span>
+      </div>
+      <p class="note">These change whether the drawing is <em>correct</em>, not just how it looks.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Method</legend>
+      <div class="row">
+        <label for="method">Method</label>
+        <select id="method"></select>
+      </div>
+      <p class="note" id="methodBlurb"></p>
+      <div class="buttons" style="margin:2px 0 8px">
+        <button id="browseStyles">Browse styles…</button>
+      </div>
+      <div id="methodParams"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Output</legend>
+      <label class="check"><input type="checkbox" id="optimizePath" checked> Optimise plotting order</label>
+      <label class="check"><input type="checkbox" id="simplifyPath" checked> Simplify paths</label>
+      <div class="row">
+        <label for="penSpeed">Pen speed</label>
+        <input type="number" id="penSpeed" min="1" max="60" step="1" value="4">
+        <span class="val">cm/s</span>
+      </div>
+      <div class="buttons" style="margin-top:8px">
+        <button class="primary" id="exportSvg">Export SVG</button>
+        <button id="exportPng" title="PNG of the current view. The Result view is re-rendered at 2x by the same renderer the tone numbers use, not screenshotted.">Export PNG</button>
+        <!-- Copy link is hidden: embedded in an iframe, as on itch.io, location.href
+             is the frame's URL rather than the app's, so the button would hand out
+             a link that restores nothing. The hash itself still works when the app
+             is served at its own address. -->
+        <button id="copyLink" hidden>Copy link</button>
+      </div>
+    </fieldset>
+  </aside>
+
+  <section class="preview">
+    <div class="viewbar">
+      <div class="seg" id="viewSeg">
+        <button data-view="result" aria-pressed="true">Result</button>
+        <button data-view="source" aria-pressed="false">Source</button>
+        <button data-view="diff" aria-pressed="false">Difference</button>
+      </div>
+      <label class="check"><input type="checkbox" id="showTravel"> Show pen-up travel</label>
+      <div class="spacer"></div>
+      <span id="hint" class="note"></span>
+    </div>
+    <div class="stage">
+      <div class="canvaswrap" id="wrap">
+        <canvas id="view"></canvas>
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="styles" hidden role="dialog" aria-modal="true" aria-label="Browse styles">
+  <div class="styles-bar">
+    <h2>Browse styles</h2>
+    <span class="note" id="stylesNote"></span>
+    <span class="spacer"></span>
+    <button id="closeStyles">Close</button>
+  </div>
+  <div class="styles-body" id="stylesBody"></div>
+</div>
+
+<footer>
+  <span>drawn <b id="statDrawn">—</b></span>
+  <span>travel <b id="statTravel">—</b></span>
+  <span>lifts <b id="statLifts">—</b></span>
+  <span>points <b id="statPoints">—</b></span>
+  <span>est. time <b id="statTime">—</b></span>
+  <span>tone error <b id="statErr">—</b></span>
+  <!-- Whatever the method chose to report about the run it just did. Empty for
+       most methods; stringArt uses it to say why its thread stopped, which is
+       the difference between "add threads" and "the drawing is finished". -->
+  <span id="methodNote" class="note"></span>
+  <span id="status">idle</span>
+</footer>
+
+<script>
+  // A CLASSIC script, deliberately: it still runs when the module graph does
+  // not. Opened from the filesystem the app's imports are CORS-blocked before
+  // any of its code executes, so the UI renders but nothing ever responds --
+  // and this ships as a zip, where double-clicking index.html is the obvious
+  // thing to try. Say so rather than looking broken.
+  if (location.protocol === 'file:') {
+    var b = document.createElement('div');
+    b.style.cssText = 'position:fixed;inset:0;z-index:99;background:#fff;color:#222;' +
+      'font:14px/1.6 system-ui,sans-serif;padding:40px;max-width:640px;margin:auto;height:max-content';
+    b.innerHTML =
+      '<h2>This page has to be served over HTTP</h2>' +
+      '<p>Browsers block ES module imports from <code>file://</code>, so the app cannot ' +
+      'load its code. No install needed — run the bundled server from this folder:</p>' +
+      '<pre style="background:#f4f4f4;padding:10px">powershell -ExecutionPolicy Bypass -File serve.ps1</pre>' +
+      '<p>then open <a href="http://localhost:8080/">http://localhost:8080/</a>. ' +
+      'Any other static server works too.</p>';
+    document.body.appendChild(b);
+  }
+</script>
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>

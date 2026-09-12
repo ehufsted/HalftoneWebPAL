@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 32 32"
+   width="32"
+   height="32"
+   version="1.1"
+   id="svg8"
+   sodipodi:docname="favicon.svg"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs8" />
+  <sodipodi:namedview
+     id="namedview8"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="24.991805"
+     inkscape:cx="16.705476"
+     inkscape:cy="13.704492"
+     inkscape:window-width="2103"
+     inkscape:window-height="1341"
+     inkscape:window-x="1001"
+     inkscape:window-y="344"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg8" />
+  <!-- Crosshatch: two stroke sets at right angles, the second only over the
+       darker half, so the icon itself shows a tone step rather than a texture. -->
+  <rect
+     width="32"
+     height="32"
+     rx="6"
+     fill="#f4f1ea"
+     id="rect1" />
+  <path
+     d="M 4.1346773,11.648956 28.068731,21.839234"
+     id="path1"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="M 8.9218756,7.2787146 28.774592,15.748429"
+     id="path1-8"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="M 4.4374555,17.883174 24.210145,26.312875"
+     id="path1-5"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="m 9.3623477,25.042242 6.9284803,2.827865"
+     id="path1-1"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="m 18.043227,4.3593966 7.808768,3.3480356"
+     id="path1-2"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="M -8.1499947,33.206466 8.6091595,-6.3225338"
+     id="path2"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="m 27.96828,35.018524 8,-19"
+     id="path3"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round" />
+  <path
+     d="M 0.61287766,33.886689 17.372032,-5.6423108"
+     id="path4"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="M 8.9756189,35.247135 25.734773,-4.2818649"
+     id="path5"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+  <path
+     d="M 18.578767,36.207449 35.337921,-3.3215502"
+     id="path6"
+     style="stroke:#16181d;stroke-width:2.4;stroke-linecap:round"
+     sodipodi:nodetypes="cc" />
+</svg>
