@@ -64,6 +64,8 @@ import { setNote } from '../spine/notes.js';
 
 export const id = 'dashHatching';
 export const label = 'Dashed hatching';
+// The single param that orients this method's marks -- see methods/index.js.
+export const rotationParam = 'angleDeg';
 
 export const params = [
   { key: 'angleDeg', label: 'Angle', type: 'range', min: 0, max: 180, step: 1, def: 26, unit: '°' },
@@ -264,4 +266,4 @@ export function run(ctx) {
   return trimLineSegsToPolygon(segs, px, py).map((s) => [[s[0], s[1]], [s[2], s[3]]]);
 }
 
-export default { id, label, params, run, targetImage, maxJoinPens };
+export default { id, label, params, run, targetImage, maxJoinPens, rotationParam };

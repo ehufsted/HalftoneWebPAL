@@ -1,7 +1,9 @@
 // UI wiring. Compute happens in worker.js; this module only gathers settings,
 // paints results, and exports.
 
-import { METHODS, METHOD_GROUPS, byId, blurbOf, defaultsFor } from './methods/index.js';
+import {
+  METHODS, METHOD_GROUPS, byId, blurbOf, defaultsFor, channelVariation, resolveBound, paramVisible,
+} from './methods/index.js';
 import { toSVG, downloadSVG } from './spine/svg.js';
 import { fromImageData, invert } from './shim/image.js';
 import { toPixels } from './spine/units.js';
@@ -140,7 +142,7 @@ function run() {
     jobId: state.jobId,
     mode: state.inkMode,
     ...(state.inkMode === 'cmyk'
-      ? { imgRGBA: state.rawRGBA, gcr: parseFloat($('gcr').value) }
+      ? { imgRGBA: state.rawRGBA, gcr: parseFloat($('gcr').value), varyChannels: $('varyChannels').checked }
       : { img: state.image }),
     settings: readSettings(),
     methodId: state.methodId,
@@ -565,16 +567,6 @@ function buildMethodUI() {
 }
 
 /**
- * A range param may give `min`/`max` as a function of the current settings
- * rather than a constant — `tenPrintHatching`'s segment length is floored at
- * twice the pen width, and that floor moves when the pen does. Call sites that
- * change a setting a bound depends on must rebuild the controls.
- */
-function resolveBound(v, settings) {
-  return typeof v === 'function' ? v(settings) : v;
-}
-
-/**
  * A param may declare `when(params)` and is hidden when it returns false, so a
  * control that does not apply to the current branch disappears rather than
  * sitting there inert (planeWaves' relaxation and seed apply only to its Voronoi
@@ -585,7 +577,7 @@ function resolveBound(v, settings) {
  * on any other param — which is why every select and checkbox rebuilds the list.
  */
 function visibleParams(method) {
-  return method.params.filter((p) => !p.when || p.when(state.params));
+  return method.params.filter((p) => paramVisible(p, state.params));
 }
 
 function buildParamUI() {
@@ -596,6 +588,7 @@ function buildParamUI() {
   // that changes the method already calls -- the picker's own change handler
   // included. `textContent`, so a blurb is prose and never markup.
   $('methodBlurb').textContent = blurbOf(state.methodId);
+  updateVaryChannelsHint();     // the new method may or may not have one to vary
   host.innerHTML = '';
   for (const p of visibleParams(method)) {
     const row = document.createElement('div');
@@ -652,6 +645,11 @@ function buildParamUI() {
       const v = parseFloat(input.value);
       state.params[p.key] = v;
       $(`pv_${p.key}`).textContent = `${v}${p.unit || ''}`;
+      // A range param can itself be what a seed/rotation param's `when` reads
+      // (stippleGrowing's seed depends on the `relaxAfter` slider) -- checkbox
+      // and select params already rebuild the whole panel and pick this up for
+      // free, so a plain slider drag is the one path that has to ask explicitly.
+      updateVaryChannelsHint();
       scheduleRun();
     });
   }
@@ -862,6 +860,9 @@ function syncHash() {
     ink: state.inkMode,
     gcr: $('gcr').value,
     ...(state.invertInk ? { inv: '1' } : {}),
+    // Checked is the default, so only an explicit uncheck needs to survive a
+    // shared link -- the same "only encode the non-default" shape as `inv`.
+    ...(!$('varyChannels').checked ? { vary: '0' } : {}),
     ...Object.fromEntries(Object.entries(state.params).map(([k, v]) => [`x_${k}`, v])),
   });
   // A sandboxed iframe — which is how itch.io embeds the page — throws
@@ -901,6 +902,10 @@ function restoreHash() {
   if (q.get('m') && METHODS.some((m) => m.id === q.get('m'))) state.methodId = q.get('m');
   if (q.get('ink') === 'cmyk' || q.get('ink') === 'single') state.inkMode = q.get('ink');
   state.invertInk = q.get('inv') === '1';
+  // Direct assignment, not through the inkMode change handler's own reset-to-
+  // checked -- this is restoring an exact shared state, not a live switch into
+  // CMYK, so an explicit `vary=0` in the link must stick.
+  if (q.get('vary') === '0') $('varyChannels').checked = false;
 
   // Rebase the params onto the method the hash names. `state.params` starts as
   // METHODS[0]'s defaults, and carrying those keys across would leave the new
@@ -1049,19 +1054,35 @@ function bindRange(id, valId, fmt = (v) => v) {
 
 /**
  * White-on-black and CMYK are separate output modes (mixing them would need
- * subtractive mixing on a dark substrate, which isn't modelled here) -- the
- * invert checkbox is disabled and its effect suspended while CMYK is active,
- * and the GCR slider goes the other way: it means nothing outside CMYK, so it
- * is disabled while single-ink is active. Shared by init() (setting up the
+ * subtractive mixing on a dark substrate, which isn't modelled here), and none
+ * of these controls means anything outside the mode they belong to -- invert
+ * outside single-ink, GCR/vary-channels outside CMYK -- so all of them hide
+ * outright rather than merely disabling. Shared by init() (setting up the
  * controls from restored state) and the inkMode change handler (reacting to a
  * live switch), so the two cannot disagree.
  */
 function updateInkModeUI() {
   const cmyk = state.inkMode === 'cmyk';
-  $('invertInk').disabled = cmyk;
-  $('invertInkRow').style.opacity = cmyk ? 0.5 : 1;
-  $('gcr').disabled = !cmyk;
-  $('gcrRow').style.opacity = cmyk ? 1 : 0.5;
+  $('invertInkRow').hidden = cmyk;
+  for (const id of ['gcrRow', 'gcrNote', 'varyChannelsRow', 'varyChannelsNote']) {
+    $(id).hidden = !cmyk;
+  }
+  updateVaryChannelsHint();
+}
+
+/**
+ * Say when the checkbox has nothing to do for the current method, rather than
+ * leaving it silently inert -- channelVariation() is exactly the capability
+ * paramsForChannel() (methods/index.js, run inside the worker) acts on, so
+ * this is reporting the same thing the worker would actually do, not a guess.
+ */
+function updateVaryChannelsHint() {
+  const el = $('varyChannelsNote');
+  if (state.inkMode !== 'cmyk') { el.textContent = ''; return; }
+  const method = byId(state.methodId);
+  el.textContent = channelVariation(method, state.params)
+    ? ''
+    : `${method.label} has no angle or seed to vary — the four layers will use identical placement.`;
 }
 
 function init() {
@@ -1095,9 +1116,16 @@ function init() {
 
   $('inkMode').addEventListener('change', (e) => {
     state.inkMode = e.target.value;
+    // Reset to the default every time single-ink switches TO CMYK, rather than
+    // remembering a previous uncheck -- moiré-avoidance is what most people
+    // want as soon as they're plotting four registered layers, and leaving a
+    // stale uncheck from a different image/method would be a surprising trap.
+    if (state.inkMode === 'cmyk') $('varyChannels').checked = true;
     updateInkModeUI();
     scheduleRun(0);
   });
+
+  $('varyChannels').addEventListener('change', () => scheduleRun(0));
 
   $('method').addEventListener('change', (e) => {
     state.methodId = e.target.value;

@@ -56,6 +56,8 @@ import { regionMask } from '../spine/mask.js';
 
 export const id = 'splitMerge';
 export const label = 'Splitting and merging lines';
+// The single param that orients this method's marks -- see methods/index.js.
+export const rotationParam = 'lineAngle';
 
 export const params = [
   // The direction the LINES run. 90 is the source's case: horizontal bands,
@@ -335,4 +337,4 @@ export function run(ctx) {
   return out;
 }
 
-export default { id, label, params, run, targetImage };
+export default { id, label, params, run, targetImage, rotationParam };

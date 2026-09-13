@@ -1,9 +1,12 @@
 // All compute runs here so the UI stays responsive.
-// Message in:  { type:'run', jobId, img, settings, methodId, params, output, mode?, imgRGBA?, gcr? }
+// Message in:  { type:'run', jobId, img, settings, methodId, params, output,
+//                mode?, imgRGBA?, gcr?, varyChannels? }
 //   mode is 'single' (default, omitted) or 'cmyk'. 'single' uses `img`, a
 //   greyscale {w,h,data}; 'cmyk' uses `imgRGBA`, a raw {width,height,data}
-//   RGBA source, which is decomposed into four channels here, and `gcr`
-//   (default 1) is passed straight through to fromImageDataCMYK.
+//   RGBA source, which is decomposed into four channels here, `gcr` (default 1)
+//   is passed straight through to fromImageDataCMYK, and `varyChannels` (default
+//   false) offsets each channel's params per paramsForChannel() so four
+//   otherwise-identical runs don't place every channel's ink in the same spots.
 // Message out: { type:'progress'|'done'|'error', ... }
 //   A 'single' run's 'done' payload is flat (lines/stats/meta/images, as before).
 //   A 'cmyk' run's 'done' payload is { channels: [{name, lines, stats, meta,
@@ -16,7 +19,7 @@ import { optimizeOrder, joinCoincidentLines } from './spine/pathOptimizer.js';
 import { simplifyAll } from './spine/simplify.js';
 import { pathLength, travelLength } from './spine/geometry.js';
 import { takeNote } from './spine/notes.js';
-import { METHODS, byId, defaultsFor } from './methods/index.js';
+import { METHODS, byId, defaultsFor, paramsForChannel } from './methods/index.js';
 
 // There is no cancellation inside this file: `runJob` is synchronous end to end,
 // so a queued 'run' cannot be observed while an earlier one is in flight.
@@ -259,10 +262,12 @@ function runOneChannel({ jobId, img, settings, methodId, params, output, stagePr
  * 0=ink convention every method and prepare() assume, then runOneChannel does
  * the rest exactly as the single-ink path does, one channel at a time.
  *
- * All four channels share one settings/params/methodId -- no per-channel screen
- * angle -- so this is a plain loop, not a redesign of runOneChannel.
+ * `varyChannels` is the only thing that can make the four channels' params
+ * differ (see paramsForChannel() in methods/index.js) -- with it off, this is
+ * a plain loop over four identical runs, not a redesign of runOneChannel.
  */
-function runJobCMYK({ jobId, imgRGBA, settings, methodId, params, output, gcr = 1 }) {
+function runJobCMYK({ jobId, imgRGBA, settings, methodId, params, output, gcr = 1, varyChannels = false }) {
+  const method = byId(methodId);
   const { c, m, y, k } = fromImageDataCMYK(imgRGBA, gcr);
   const names = ['C', 'M', 'Y', 'K'];
   const planes = [c, m, y, k];
@@ -270,8 +275,9 @@ function runJobCMYK({ jobId, imgRGBA, settings, methodId, params, output, gcr = 
   const channels = [];
   const transfer = [];
   for (let i = 0; i < 4; i++) {
+    const channelParams = varyChannels ? paramsForChannel(method, params, i, settings) : params;
     const { payload, transfer: t } = runOneChannel({
-      jobId, img: invert(planes[i]), settings, methodId, params, output,
+      jobId, img: invert(planes[i]), settings, methodId, params: channelParams, output,
       stagePrefix: names[i],
     });
     channels.push({ name: names[i], ...payload });

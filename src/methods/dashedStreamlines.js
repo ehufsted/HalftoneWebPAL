@@ -65,6 +65,12 @@ import { traceStreamlines } from './streamlines.js';
 
 export const id = 'dashedStreamlines';
 export const label = 'Dashed streamlines';
+// Same reasoning and the same caveat as streamlines.js: `angleOffset` is
+// relative to the image's own field, `flatAngle` is the one true absolute
+// angle -- but its contribution fades wherever the image's own tangent/
+// gradient field is coherent, so CMYK's "rotate/shift" checkbox only fully
+// decorrelates the channels in flat/uniform regions. See methods/index.js.
+export const rotationParam = 'flatAngle';
 
 export const params = [
   // min 1 is the merge floor, as everywhere: at d_sep = w the lines touch and the
@@ -263,4 +269,4 @@ export function run(ctx) {
   return out;
 }
 
-export default { id, label, params, run, targetImage, maxJoinPens };
+export default { id, label, params, run, targetImage, maxJoinPens, rotationParam };

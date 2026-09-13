@@ -40,6 +40,19 @@ import { setNote } from '../spine/notes.js';
 
 export const id = 'streamlines';
 export const label = 'Streamlines (flow hatching)';
+// `angleOffset` changes the hatching's relationship to the image's own field
+// (tangent vs gradient), not a plain direction -- `flatAngle` is the one true
+// absolute angle here, the fallback used where the field has no direction to
+// follow. See methods/index.js.
+//
+// PARTIAL, NOT COMPLETE, DECORRELATION. blendedField() blends flatAngle with
+// the tangent/gradient direction weighted by coherence, so on a photo with
+// real edges and gradients -- most of them -- flatAngle's contribution shrinks
+// wherever the image already has a strong direction of its own, and CMYK's
+// "rotate/shift" checkbox correspondingly loses effect there. It still fully
+// controls flat/uniform regions, so it is a genuine capability, just not the
+// uniform four-way separation a hatch angle gives across the whole page.
+export const rotationParam = 'flatAngle';
 
 export const params = [
   // Same names, ranges and floors as eikonalStripes and planeWaves. The limits
@@ -523,4 +536,4 @@ export function run(ctx) {
   return out;
 }
 
-export default { id, label, params, run, targetImage };
+export default { id, label, params, run, targetImage, rotationParam };

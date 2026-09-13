@@ -26,7 +26,7 @@
 // It also means full black is reachable: discs circumscribing the cells of a
 // tiling cover the plane.
 
-import { resize, interp2, inpolygon } from '../shim/image.js';
+import { resize, interp2, inpolygon, blurGaussian } from '../shim/image.js';
 import { mulberry32 } from '../spine/random.js';
 import { hilbertCurve, hilbertParamsFor } from '../curves/hilbert.js';
 import { dotPath } from '../spine/dots.js';
@@ -74,7 +74,17 @@ export const params = [
     when: (p) => p.mode === 'dbs' },
   { key: 'dbsScale', label: 'DBS blur', type: 'range', min: 1, max: 6, step: 0.5, def: 3, unit: ' cells',
     when: (p) => p.mode === 'dbs' },
-  { key: 'seed', label: 'Seed', type: 'range', min: 1, max: 999, step: 1, def: 1 },
+  // Error diffusion (both 1-D and 2-D) is fully deterministic -- modeErrorDiffusion
+  // never touches rand() at all, doesn't even take it as an argument -- so the
+  // control only applies to the three modes that do: threshold's tie-jitter,
+  // random's coin flips, DBS's swap moves.
+  { key: 'seed', label: 'Seed', type: 'range', min: 1, max: 999, step: 1, def: 1,
+    when: (p) => p.mode === 'threshold' || p.mode === 'random' || p.mode === 'dbs' },
+  // 0-90 covers both lattices' full range of distinct appearances with one
+  // slider: the square lattice repeats every 90°, the hex one every 60° (so
+  // 60-90 there just retraces 0-30) -- harmless overlap, not a bug, and simpler
+  // than a per-lattice range. See buildLattice() for what actually rotates.
+  { key: 'angleDeg', label: 'Rotation', type: 'range', min: 0, max: 90, step: 1, def: 0, unit: '°' },
 ];
 
 /**
@@ -140,48 +150,107 @@ const DBS_SCALE = 1;
  * Acircle/Acell = pi/2. Hex: horizontal spacing rDot*sqrt(3) with rows
  * sqrt(3)/2 of that apart and alternate rows offset half a cell, so the dot
  * radius is the hexagon's circumradius and Acircle/Acell = 2pi/(3 sqrt 3).
+ *
+ * `angleDeg` rotates the lattice basis about the image centre. At 0 (the
+ * default, and the only value the tone tests pin) this is exactly the old
+ * axis-aligned code: one resized pixel per cell for a true area average,
+ * matching MATLAB's antialiased imresize precisely. That trick only works
+ * because the lattice lines up with the pixel grid -- resize cannot produce a
+ * rotated raster -- so any other angle takes a second path: blur the source to
+ * the cell's footprint (standing in for the area average resize gave for free)
+ * and bilinear-sample it at each cell's own rotated position. Equivalent in
+ * the limit, not bit-identical, which is the whole reason 0 keeps its own path
+ * rather than being folded into this one as a special case of it.
  */
-export function buildLattice(ctx, kind, rDot) {
+export function buildLattice(ctx, kind, rDot, angleDeg = 0) {
   const { nx, ny } = ctx;
   const { px, py } = ctx.polygon;
   const hex = kind === 'hex';
 
   const dxCell = rDot * (hex ? Math.sqrt(3) : Math.SQRT2);
   const dyCell = hex ? (Math.sqrt(3) / 2) * dxCell : dxCell;
-  const cols = Math.max(2, Math.round((nx - 1) / dxCell) + 1);
-  const rows = Math.max(2, Math.round((ny - 1) / dyCell) + 1);
-  const x0 = 1 + (nx - 1 - (cols - 1) * dxCell) / 2;
-  const y0 = 1 + (ny - 1 - (rows - 1) * dyCell) / 2;
-  const n = cols * rows;
-
   const Kextra = ACCOUNT_FOR_OVERLAPS
     ? (Math.PI * rDot * rDot) / (dxCell * dyCell) - 1
     : 0;
   const maxDeg = hex ? 6 : 4;
 
-  // One resized pixel per cell, so the downsample area-averages rather than
-  // point-sampling -- the MATLAB's imresize. Odd hex rows are then sampled half
-  // a cell to the right, which is what its interp2 onto the hex grid does.
-  const small = resize(ctx.im, cols, rows);
+  let cols, rows, cx, cy, K, inside;
 
-  const cx = new Float64Array(n), cy = new Float64Array(n);
-  const K = new Float64Array(n);
-  const inside = new Uint8Array(n);
-  for (let i = 0; i < rows; i++) {
-    const shift = hex && i % 2 === 1 ? 0.5 : 0;
-    for (let j = 0; j < cols; j++) {
-      const c = i * cols + j;
-      const X = x0 + (j + shift) * dxCell;
-      const Y = y0 + i * dyCell;
-      cx[c] = X; cy[c] = Y;
-      if (!inpolygon(X, Y, px, py)) continue;
-      inside[c] = 1;
-      const sxp = Math.min(cols, Math.max(1, j + 1 + shift));
-      let v = interp2(small, sxp, i + 1);
-      if (!isFinite(v)) v = 1;
-      K[c] = 1 - Math.min(1, Math.max(0, v));
+  if (!angleDeg) {
+    cols = Math.max(2, Math.round((nx - 1) / dxCell) + 1);
+    rows = Math.max(2, Math.round((ny - 1) / dyCell) + 1);
+    const x0 = 1 + (nx - 1 - (cols - 1) * dxCell) / 2;
+    const y0 = 1 + (ny - 1 - (rows - 1) * dyCell) / 2;
+    const n = cols * rows;
+    cx = new Float64Array(n); cy = new Float64Array(n);
+    K = new Float64Array(n);
+    inside = new Uint8Array(n);
+
+    // One resized pixel per cell, so the downsample area-averages rather than
+    // point-sampling -- the MATLAB's imresize. Odd hex rows are then sampled
+    // half a cell to the right, which is what its interp2 onto the hex grid does.
+    const small = resize(ctx.im, cols, rows);
+    for (let i = 0; i < rows; i++) {
+      const shift = hex && i % 2 === 1 ? 0.5 : 0;
+      for (let j = 0; j < cols; j++) {
+        const c = i * cols + j;
+        const X = x0 + (j + shift) * dxCell;
+        const Y = y0 + i * dyCell;
+        cx[c] = X; cy[c] = Y;
+        if (!inpolygon(X, Y, px, py)) continue;
+        inside[c] = 1;
+        const sxp = Math.min(cols, Math.max(1, j + 1 + shift));
+        let v = interp2(small, sxp, i + 1);
+        if (!isFinite(v)) v = 1;
+        K[c] = 1 - Math.min(1, Math.max(0, v));
+      }
+    }
+  } else {
+    const theta = (angleDeg * Math.PI) / 180;
+    // One basis vector per grid axis, both rotated by theta; `j` steps along
+    // (ux,uy)*dxCell, `i` steps along (vx,vy)*dyCell, exactly replacing the
+    // axis-aligned (dxCell,0)/(0,dyCell) steps above.
+    const ux = Math.cos(theta), uy = Math.sin(theta);
+    const vx = -Math.sin(theta), vy = Math.cos(theta);
+
+    // A lattice rotated in place needs more cells to reach every corner than
+    // one aligned with the page -- up to the full diagonal, at 45° on a square
+    // page. Oversized on purpose; inpolygon() below discards whatever spills
+    // past the actual page, exactly as it already does at the unrotated edges.
+    const diag = Math.hypot(nx, ny);
+    cols = Math.max(2, Math.round(diag / dxCell) + 2);
+    rows = Math.max(2, Math.round(diag / dyCell) + 2);
+    const n = cols * rows;
+    cx = new Float64Array(n); cy = new Float64Array(n);
+    K = new Float64Array(n);
+    inside = new Uint8Array(n);
+
+    // Stand-in for resize's area average, which only works axis-aligned: blur
+    // the source to roughly one cell's footprint, then point-sample it at each
+    // cell's rotated position. Sigma of half a cell width is the same ratio
+    // `prepare()`'s own pre-smooth uses relative to its blur radius.
+    const sigma = Math.max(1, dyCell / 2);
+    const blurred = blurGaussian(ctx.im, Math.max(3, Math.round(sigma * 3)), sigma);
+
+    const cxImg = (nx + 1) / 2, cyImg = (ny + 1) / 2;
+    const j0 = (cols - 1) / 2, i0 = (rows - 1) / 2;
+    for (let i = 0; i < rows; i++) {
+      const shift = hex && i % 2 === 1 ? 0.5 : 0;
+      for (let j = 0; j < cols; j++) {
+        const c = i * cols + j;
+        const jj = j + shift - j0, ii = i - i0;
+        const X = cxImg + jj * dxCell * ux + ii * dyCell * vx;
+        const Y = cyImg + jj * dxCell * uy + ii * dyCell * vy;
+        cx[c] = X; cy[c] = Y;
+        if (!inpolygon(X, Y, px, py)) continue;
+        inside[c] = 1;
+        let v = interp2(blurred, X, Y);
+        if (!isFinite(v)) v = 1;
+        K[c] = 1 - Math.min(1, Math.max(0, v));
+      }
     }
   }
+  const n = cols * rows;
 
   // adjacency; -1 marks a missing neighbour, whose share of the spillover is
   // simply lost, as the MATLAB's array shifts also lose it at the border
@@ -615,7 +684,7 @@ function modeDBS(lat, rand, iterations, scale) {
 /** Which cells get a dot. Exported so the harness can score the ink identity. */
 export function ditherPattern(ctx) {
   const rDot = Math.max(ctx.w / 2, ((ctx.dDotW ?? 3) / 2) * ctx.w);
-  const lat = buildLattice(ctx, ctx.lattice ?? 'hex', rDot);
+  const lat = buildLattice(ctx, ctx.lattice ?? 'hex', rDot, ctx.angleDeg ?? 0);
   const rand = mulberry32(Math.round(ctx.seed ?? 1));
   const mode = ctx.mode ?? 'ed2';
 
@@ -644,4 +713,25 @@ export function run(ctx) {
 
 // No targetImage: every mode aims at the source image exactly, and the overlap
 // accounting above is exact rather than a correction to be modelled.
-export default { id, label, params, run };
+//
+// No seedMatters() either, unlike tenPrintHatching: there, the same condition
+// had to be expressed as a capability because the seed control has no `when`
+// of its own to hide it -- here `seed`'s own `when` (above) already says
+// exactly when it applies, and channelVariation() reads that gate directly.
+
+// The single param that orients this method's marks -- see methods/index.js.
+export const rotationParam = 'angleDeg';
+
+// The slider's own 0-90 range is shared by both lattices for one control
+// rather than two, but a hex lattice's true visual period is 60°, not 90° --
+// rotating it by 90° reproduces the original exactly, by 60° too. Without
+// this, the CMYK rosette offsets (methods/index.js's ROTATION_FRACTIONS,
+// scaled by the slider's declared 90° range) can put two channels back on the
+// same apparent hex orientation; scaled by the real period here instead, the
+// four fractions -- none differing from another by a whole number -- never
+// coincide at ANY period, hex's included.
+export function rotationPeriod(params) {
+  return (params.lattice ?? 'hex') === 'hex' ? 60 : 90;
+}
+
+export default { id, label, params, run, rotationParam, rotationPeriod };

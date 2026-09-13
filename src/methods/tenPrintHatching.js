@@ -447,4 +447,18 @@ export function run(ctx) {
   return trimmed.map((s) => [[s[0], s[1]], [s[2], s[3]]]);
 }
 
-export default { id, label, params, run, targetImage };
+// `seed` meaningfully feeds the diagonal-choosing rand() calls in the 'random'
+// angle source (see run(), the `orient ? ... : rand() * 2 * Math.PI` branch) --
+// at 'field' and 'dithered' the orientation comes from the structure tensor /
+// diffused error instead. Seed also feeds a 1e-9 tie-break in the marking
+// accumulator (the `rand() * 1e-9` a few lines up, "so that a run of identical
+// cells does not always mark the same one") in EVERY mode, but that only
+// changes anything on a run of literally identical K values -- for any real
+// image, nowhere near enough to call this method varied. So: 'random' is
+// reported as seed-dependent, the other two are not, on visible effect rather
+// than bit-exactness.
+export function seedMatters(params) {
+  return (params.angleSource ?? 'field') === 'random';
+}
+
+export default { id, label, params, run, targetImage, seedMatters };

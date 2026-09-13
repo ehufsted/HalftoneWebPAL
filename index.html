@@ -41,6 +41,9 @@
   .row label { flex: 0 0 110px; color: var(--dim); }
   .row input[type=range] { flex: 1 1 auto; min-width: 0; }
   .row .val { flex: 0 0 62px; text-align: right; font-variant-numeric: tabular-nums; }
+  /* Sets its own `display`, so the `hidden` attribute alone loses to it --
+     same reason #styles[hidden] below needs its own override. */
+  .row[hidden] { display: none; }
   input[type=number], select {
     background: #12131a; color: var(--text); border: 1px solid var(--line);
     border-radius: 4px; padding: 3px 6px; font: inherit; width: 100%;
@@ -75,6 +78,7 @@
   .seg button { border: 0; border-radius: 0; padding: 4px 10px; }
   .seg button[aria-pressed=true] { background: var(--accent); color: #10131a; font-weight: 600; }
   label.check { color: var(--dim); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  label.check[hidden] { display: none; }
 
   .stage {
     flex: 1 1 auto; min-height: 0; display: grid; place-items: center;
@@ -258,12 +262,16 @@
       <label class="check" id="invertInkRow">
         <input type="checkbox" id="invertInk"> White ink on black page
       </label>
-      <div class="row" id="gcrRow">
+      <div class="row" id="gcrRow" hidden>
         <label for="gcr">Black gen.</label>
         <input type="range" id="gcr" min="0" max="1" step="0.05" value="1">
         <span class="val" id="gcrVal">1.00</span>
       </div>
-      <p class="note">CMYK splits the image into cyan/magenta/yellow/black layers, one halftone pass each — for hand-registered multi-pen plots. Not combined with white-on-black. Black gen. (GCR) trades richer, more saturated shadows (0) for shadows that print through the black pen alone (1) — pure black is easier to register than three overprinted pens.</p>
+      <p class="note" id="gcrNote" hidden>Trades richer, more saturated shadows (0) for shadows that print through the black pen alone (1) — pure black is easier to register than three overprinted pens.</p>
+      <label class="check" id="varyChannelsRow" hidden>
+        <input type="checkbox" id="varyChannels" checked> Rotate/shift each layer
+      </label>
+      <p class="note" id="varyChannelsNote" hidden></p>
     </fieldset>
 
     <fieldset class="tone">
