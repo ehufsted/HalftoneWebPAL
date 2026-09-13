@@ -36,6 +36,7 @@ import { resize, makeImage, inpolygon } from '../shim/image.js';
 import { mulberry32 } from '../spine/random.js';
 import { structureTensorField } from '../spine/field.js';
 import { trimLineSegsToPolygon } from '../spine/geometry.js';
+import { COINCIDENT_PENS } from '../spine/pathOptimizer.js';
 
 export const id = 'tenPrintHatching';
 export const label = '10 PRINT hatching';
@@ -447,6 +448,28 @@ export function run(ctx) {
   return trimmed.map((s) => [[s[0], s[1]], [s[2], s[3]]]);
 }
 
+/**
+ * Only genuinely coincident endpoints may be joined. See `COINCIDENT_PENS`.
+ *
+ * Every marked cell is its own independent 2-point segment -- run() never
+ * merges collinear runs itself -- so the pipeline's default 1.5 pen widths is
+ * the only thing standing between "10 PRINT" and a maze of hairpins. The
+ * header already says why that default is far too loose here: "parallel
+ * diagonals in adjacent cells sit Lseg/2 apart", which at the merge floor
+ * (Lseg = 2 * penWidth) is exactly ONE pen width -- comfortably inside 1.5, so
+ * `optimizeOrder` routinely leaves two UNRELATED diagonals from neighbouring
+ * cells closer together than the join tolerance, and the joiner welds them
+ * into one stroke that bridges straight across the gap between them, a seam
+ * the maze never asked for.
+ *
+ * No join at this tolerance is ever a false negative: two segments from a
+ * genuinely continuous run of same-orientation diagonals share an EXACT grid
+ * corner (distance 0), always well inside even this tight a bound.
+ */
+export function maxJoinPens() {
+  return COINCIDENT_PENS;
+}
+
 // `seed` meaningfully feeds the diagonal-choosing rand() calls in the 'random'
 // angle source (see run(), the `orient ? ... : rand() * 2 * Math.PI` branch) --
 // at 'field' and 'dithered' the orientation comes from the structure tensor /
@@ -461,4 +484,4 @@ export function seedMatters(params) {
   return (params.angleSource ?? 'field') === 'random';
 }
 
-export default { id, label, params, run, targetImage, seedMatters };
+export default { id, label, params, run, targetImage, seedMatters, maxJoinPens };

@@ -30,11 +30,30 @@
     width: 340px; flex: 0 0 340px; border-right: 1px solid var(--line);
     overflow-y: auto; padding: var(--pad); background: var(--panel);
   }
-  fieldset {
+  /* Collapsible sidebar sections. <details>/<summary> rather than <fieldset>/
+     <legend>: the toggle-on-tap behaviour this exists for is native to it, no
+     JS needed for the mechanic itself (see tests/report.js's section picker,
+     the same element already used elsewhere in this project). The section's
+     own padding lives on .body rather than on <details> itself, so a closed
+     section doesn't carry dead space below a <summary> nothing follows. */
+  details {
     border: 1px solid var(--line); border-radius: 6px;
-    margin: 0 0 12px; padding: 8px 10px 10px;
+    margin: 0 0 12px; overflow: hidden;
   }
-  legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; padding: 0 4px; }
+  details > summary {
+    color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary:hover { background: #ffffff10; }
+  /* The disclosure triangle. content-driven rather than an image, so it
+     inherits the summary's own colour and needs no asset. */
+  details > summary::after {
+    content: '▸'; margin-left: auto; transition: transform .15s;
+  }
+  details[open] > summary::after { transform: rotate(90deg); }
+  details > .body { padding: 0 10px 10px; }
 
 
   .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
@@ -208,119 +227,131 @@
 
 <main>
   <aside>
-    <fieldset>
-      <legend>Image</legend>
-      <div id="drop">Drop an image, or click to choose</div>
-      <input type="file" id="file" accept="image/*" hidden>
-      <div class="samples">
-        <button data-sample="sphere">Sphere</button>
-        <button data-sample="ramp">Ramp</button>
-        <button data-sample="rings">Rings</button>
-        <button data-sample="rhino">Rhino</button>
+    <details open>
+      <summary>Image</summary>
+      <div class="body">
+        <div id="drop">Drop an image, or click to choose</div>
+        <input type="file" id="file" accept="image/*" hidden>
+        <div class="samples">
+          <button data-sample="sphere">Sphere</button>
+          <button data-sample="ramp">Ramp</button>
+          <button data-sample="rings">Rings</button>
+          <button data-sample="rhino">Rhino</button>
+        </div>
       </div>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Paper &amp; pen</legend>
-      <div class="row">
-        <label for="paper">Paper</label>
-        <select id="paper">
-          <option value="10">10 cm wide</option>
-          <option value="14.8">A6 · 14.8 cm</option>
-          <option value="21" selected>A5 · 21 cm</option>
-          <option value="29.7">A4 · 29.7 cm</option>
-          <option value="42">A3 · 42 cm</option>
-        </select>
+    <details open>
+      <summary>Paper &amp; pen</summary>
+      <div class="body">
+        <div class="row">
+          <label for="paper">Paper</label>
+          <select id="paper">
+            <option value="10">10 cm wide</option>
+            <option value="14.8">A6 · 14.8 cm</option>
+            <option value="21" selected>A5 · 21 cm</option>
+            <option value="29.7">A4 · 29.7 cm</option>
+            <option value="42">A3 · 42 cm</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="penWidth">Pen width</label>
+          <select id="penWidth">
+            <option value="0.2">0.2 mm</option>
+            <option value="0.3">0.3 mm (Micron 01)</option>
+            <option value="0.5" selected>0.5 mm (gel)</option>
+            <option value="0.7">0.7 mm</option>
+            <option value="1.0">1.0 mm</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="pxPerCm">Detail</label>
+          <input type="range" id="pxPerCm" min="10" max="80" step="1" value="30">
+          <span class="val" id="pxPerCmVal">30</span>
+        </div>
+        <p class="note">Detail is pixels per cm — the resolution the method works at.</p>
       </div>
-      <div class="row">
-        <label for="penWidth">Pen width</label>
-        <select id="penWidth">
-          <option value="0.2">0.2 mm</option>
-          <option value="0.3">0.3 mm (Micron 01)</option>
-          <option value="0.5" selected>0.5 mm (gel)</option>
-          <option value="0.7">0.7 mm</option>
-          <option value="1.0">1.0 mm</option>
-        </select>
-      </div>
-      <div class="row">
-        <label for="pxPerCm">Detail</label>
-        <input type="range" id="pxPerCm" min="10" max="80" step="1" value="30">
-        <span class="val" id="pxPerCmVal">30</span>
-      </div>
-      <p class="note">Detail is pixels per cm — the resolution the method works at.</p>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Ink</legend>
-      <div class="row">
-        <label for="inkMode">Mode</label>
-        <select id="inkMode">
-          <option value="single" selected>Single ink</option>
-          <option value="cmyk">CMYK · 4 layers</option>
-        </select>
+    <details open>
+      <summary>Ink</summary>
+      <div class="body">
+        <div class="row">
+          <label for="inkMode">Mode</label>
+          <select id="inkMode">
+            <option value="single" selected>Single ink</option>
+            <option value="cmyk">CMYK · 4 layers</option>
+          </select>
+        </div>
+        <label class="check" id="invertInkRow">
+          <input type="checkbox" id="invertInk"> White ink on black page
+        </label>
+        <div class="row" id="gcrRow" hidden>
+          <label for="gcr">Black gen.</label>
+          <input type="range" id="gcr" min="0" max="1" step="0.05" value="1">
+          <span class="val" id="gcrVal">1.00</span>
+        </div>
+        <p class="note" id="gcrNote" hidden>Trades richer, more saturated shadows (0) for shadows that print through the black pen alone (1) — pure black is easier to register than three overprinted pens.</p>
+        <label class="check" id="varyChannelsRow" hidden>
+          <input type="checkbox" id="varyChannels" checked> Rotate/shift each layer
+        </label>
+        <p class="note" id="varyChannelsNote" hidden></p>
       </div>
-      <label class="check" id="invertInkRow">
-        <input type="checkbox" id="invertInk"> White ink on black page
-      </label>
-      <div class="row" id="gcrRow" hidden>
-        <label for="gcr">Black gen.</label>
-        <input type="range" id="gcr" min="0" max="1" step="0.05" value="1">
-        <span class="val" id="gcrVal">1.00</span>
-      </div>
-      <p class="note" id="gcrNote" hidden>Trades richer, more saturated shadows (0) for shadows that print through the black pen alone (1) — pure black is easier to register than three overprinted pens.</p>
-      <label class="check" id="varyChannelsRow" hidden>
-        <input type="checkbox" id="varyChannels" checked> Rotate/shift each layer
-      </label>
-      <p class="note" id="varyChannelsNote" hidden></p>
-    </fieldset>
+    </details>
 
-    <fieldset class="tone">
-      <legend>Tone</legend>
-      <div class="row">
-        <label for="gamma">Gamma</label>
-        <input type="range" id="gamma" min="0.4" max="3" step="0.05" value="1.4">
-        <span class="val" id="gammaVal">1.40</span>
+    <details class="tone" open>
+      <summary>Tone</summary>
+      <div class="body">
+        <div class="row">
+          <label for="gamma">Gamma</label>
+          <input type="range" id="gamma" min="0.4" max="3" step="0.05" value="1.4">
+          <span class="val" id="gammaVal">1.40</span>
+        </div>
+        <div class="row">
+          <label for="rSmooth">Smoothing</label>
+          <input type="range" id="rSmooth" min="0" max="6" step="0.1" value="1.5">
+          <span class="val" id="rSmoothVal">1.5</span>
+        </div>
+        <p class="note">These change whether the drawing is <em>correct</em>, not just how it looks.</p>
       </div>
-      <div class="row">
-        <label for="rSmooth">Smoothing</label>
-        <input type="range" id="rSmooth" min="0" max="6" step="0.1" value="1.5">
-        <span class="val" id="rSmoothVal">1.5</span>
-      </div>
-      <p class="note">These change whether the drawing is <em>correct</em>, not just how it looks.</p>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Method</legend>
-      <div class="row">
-        <label for="method">Method</label>
-        <select id="method"></select>
+    <details open>
+      <summary>Method</summary>
+      <div class="body">
+        <div class="row">
+          <label for="method">Method</label>
+          <select id="method"></select>
+        </div>
+        <p class="note" id="methodBlurb"></p>
+        <div class="buttons" style="margin:2px 0 8px">
+          <button id="browseStyles">Browse styles…</button>
+        </div>
+        <div id="methodParams"></div>
       </div>
-      <p class="note" id="methodBlurb"></p>
-      <div class="buttons" style="margin:2px 0 8px">
-        <button id="browseStyles">Browse styles…</button>
-      </div>
-      <div id="methodParams"></div>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Output</legend>
-      <label class="check"><input type="checkbox" id="optimizePath" checked> Optimise plotting order</label>
-      <label class="check"><input type="checkbox" id="simplifyPath" checked> Simplify paths</label>
-      <div class="row">
-        <label for="penSpeed">Pen speed</label>
-        <input type="number" id="penSpeed" min="1" max="60" step="1" value="4">
-        <span class="val">cm/s</span>
+    <details open>
+      <summary>Output</summary>
+      <div class="body">
+        <label class="check"><input type="checkbox" id="optimizePath" checked> Optimise plotting order</label>
+        <label class="check"><input type="checkbox" id="simplifyPath" checked> Simplify paths</label>
+        <div class="row">
+          <label for="penSpeed">Pen speed</label>
+          <input type="number" id="penSpeed" min="1" max="60" step="1" value="4">
+          <span class="val">cm/s</span>
+        </div>
+        <div class="buttons" style="margin-top:8px">
+          <button class="primary" id="exportSvg">Export SVG</button>
+          <button id="exportPng" title="PNG of the current view. The Result view is re-rendered at 2x by the same renderer the tone numbers use, not screenshotted.">Export PNG</button>
+          <!-- Copy link is hidden: embedded in an iframe, as on itch.io, location.href
+               is the frame's URL rather than the app's, so the button would hand out
+               a link that restores nothing. The hash itself still works when the app
+               is served at its own address. -->
+          <button id="copyLink" hidden>Copy link</button>
+        </div>
       </div>
-      <div class="buttons" style="margin-top:8px">
-        <button class="primary" id="exportSvg">Export SVG</button>
-        <button id="exportPng" title="PNG of the current view. The Result view is re-rendered at 2x by the same renderer the tone numbers use, not screenshotted.">Export PNG</button>
-        <!-- Copy link is hidden: embedded in an iframe, as on itch.io, location.href
-             is the frame's URL rather than the app's, so the button would hand out
-             a link that restores nothing. The hash itself still works when the app
-             is served at its own address. -->
-        <button id="copyLink" hidden>Copy link</button>
-      </div>
-    </fieldset>
+    </details>
   </aside>
 
   <section class="preview">
