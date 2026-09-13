@@ -21,16 +21,20 @@ const fmt = (v, dp = 3) => {
 };
 
 /**
- * @param {Array<{name:string, lines:Array<Array<[number,number]>>}>} layers
+ * @param {Array<{name:string, lines:Array<Array<[number,number]>>, color?:string}>} layers
+ *   `color` is the stroke colour for that layer, e.g. "#000000" or "#00AEEF".
+ *   Defaults to black, so a caller that never sets it draws as before.
  * @param {object} opts
  * @param {number} opts.widthCm, opts.heightCm   page size
  * @param {number} opts.penWidthCm               stroke width
+ * @param {string} [opts.background]             page-colour rect, e.g. for ink
+ *   plotted on coloured stock; omitted entirely when not given.
  *
- * No stroke colour or margin option: a margin belongs in the page setup, since
- * the plot must come out at the physical size the units contract promises.
+ * No margin option: a margin belongs in the page setup, since the plot must
+ * come out at the physical size the units contract promises.
  */
 export function toSVG(layers, opts) {
-  const { widthCm, heightCm, penWidthCm } = opts;
+  const { widthCm, heightCm, penWidthCm, background } = opts;
 
   const wMm = widthCm * 10;
   const hMm = heightCm * 10;
@@ -42,15 +46,19 @@ export function toSVG(layers, opts) {
     `width="${fmt(wMm)}mm" height="${fmt(hMm)}mm" ` +
     `viewBox="0 0 ${fmt(wMm)} ${fmt(hMm)}">`
   );
+  if (background) {
+    // Plain rect, outside every layer group, so it is not itself a plottable path.
+    parts.push(`<rect x="0" y="0" width="${fmt(wMm)}" height="${fmt(hMm)}" fill="${background}"/>`);
+  }
   parts.push(
-    `<g fill="none" stroke="#000000" stroke-width="${fmt(swMm, 4)}" ` +
+    `<g fill="none" stroke-width="${fmt(swMm, 4)}" ` +
     `stroke-linecap="round" stroke-linejoin="round">`
   );
 
   layers.forEach((layer, li) => {
     parts.push(
       `<g inkscape:groupmode="layer" inkscape:label="${escapeAttr(layer.name)}" ` +
-      `id="layer${li + 1}">`
+      `id="layer${li + 1}" stroke="${layer.color || '#000000'}">`
     );
     for (const line of layer.lines) {
       if (!line || line.length === 0) continue;

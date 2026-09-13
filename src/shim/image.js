@@ -26,6 +26,50 @@ export function fromImageData(imgData) {
   return out;
 }
 
+/** 1 - v. Flips which end of [0,1] means "ink" -- the whole of a white-on-black run. */
+export function invert(im) {
+  const out = cloneImage(im);
+  for (let i = 0; i < out.data.length; i++) out.data[i] = 1 - out.data[i];
+  return out;
+}
+
+/**
+ * rgb2cmyk with grey component replacement (GCR).
+ *
+ * Naive subtractive split: c/m/y start as the complements of r/g/b, then the
+ * amount they agree on (their minimum, scaled by `gcr`) is pulled out into k --
+ * gcr=1 is full replacement (no channel carries any grey it doesn't have to),
+ * gcr=0 leaves k at 0 and c/m/y unadjusted.
+ *
+ * Plain subtraction, NOT divided back out by (1-k). Dividing would rescale
+ * each channel back up to [0,1] and preserve saturation on fully-saturated
+ * colours, but it blows up exactly where gcr=1 matters most: a near-black
+ * pixel has cc/mm/yy all close to kk, so 1-kk is tiny and any noise between
+ * the three channels -- sensor noise, JPEG blocking, nothing a viewer would
+ * call a colour cast -- gets divided by that tiny number into a chunk of
+ * spurious cyan or magenta ink through what should be a neutral shadow.
+ * Subtracting without rescaling keeps a near-black pixel near zero in every
+ * channel but k, at the cost of never fully saturating C/M/Y on their own.
+ *
+ * Each output plane is a COVERAGE image -- 0 = no ink, 1 = full ink of that
+ * colorant -- the opposite polarity from fromImageData's 0=ink convention, so a
+ * caller must invert() a plane before handing it to prepare().
+ */
+export function fromImageDataCMYK(imgData, gcr = 1) {
+  const { width: w, height: h, data: src } = imgData;
+  const c = makeImage(w, h), m = makeImage(w, h), y = makeImage(w, h), k = makeImage(w, h);
+  for (let i = 0, p = 0; i < c.data.length; i++, p += 4) {
+    const r = src[p] / 255, g = src[p + 1] / 255, b = src[p + 2] / 255;
+    const cc = 1 - r, mm = 1 - g, yy = 1 - b;
+    const kk = Math.min(cc, mm, yy) * gcr;
+    c.data[i] = cc - kk;
+    m.data[i] = mm - kk;
+    y.data[i] = yy - kk;
+    k.data[i] = kk;
+  }
+  return { c, m, y, k };
+}
+
 /**
  * imresize. Area-average on an axis that SHRINKS (which is what keeps tone
  * correct -- MATLAB's default bicubic+antialiasing does the same job), bilinear

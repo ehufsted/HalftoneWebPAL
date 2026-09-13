@@ -1,8 +1,15 @@
 // All compute runs here so the UI stays responsive.
-// Message in:  { type:'run', jobId, img, settings, methodId, params, output }
+// Message in:  { type:'run', jobId, img, settings, methodId, params, output, mode?, imgRGBA?, gcr? }
+//   mode is 'single' (default, omitted) or 'cmyk'. 'single' uses `img`, a
+//   greyscale {w,h,data}; 'cmyk' uses `imgRGBA`, a raw {width,height,data}
+//   RGBA source, which is decomposed into four channels here, and `gcr`
+//   (default 1) is passed straight through to fromImageDataCMYK.
 // Message out: { type:'progress'|'done'|'error', ... }
+//   A 'single' run's 'done' payload is flat (lines/stats/meta/images, as before).
+//   A 'cmyk' run's 'done' payload is { channels: [{name, lines, stats, meta,
+//   images}, ...] }, one entry per C/M/Y/K, in that order.
 
-import { blurGaussian, makeImage, resize } from './shim/image.js';
+import { blurGaussian, makeImage, resize, invert, fromImageDataCMYK } from './shim/image.js';
 import { prepare, toPhysical, toPixels, simplifyLengthFor } from './spine/units.js';
 import { renderStrokes } from './spine/render.js';
 import { optimizeOrder, joinCoincidentLines } from './spine/pathOptimizer.js';
@@ -101,13 +108,27 @@ function runThumbs({ jobId, img, settings }) {
   self.postMessage({ type: 'thumbsDone', jobId });
 }
 
-function runJob({ jobId, img, settings, methodId, params, output }) {
-  const method = byId(methodId);
+function runJob(msg) {
+  return msg.mode === 'cmyk' ? runJobCMYK(msg) : runOneChannel(msg);
+}
 
-  progress(jobId, 'preparing');
+/**
+ * One method, one grayscale plane, start to finish -- prepare, run, order,
+ * simplify, render, measure. This is the whole of what a 'single' job does;
+ * a 'cmyk' job calls it four times, once per channel, with no changes needed
+ * here (methods and the pipeline stay channel-agnostic throughout).
+ *
+ * `stagePrefix` decorates progress messages (e.g. "C: placing strokes") so a
+ * CMYK run's status line says which channel is in flight.
+ */
+function runOneChannel({ jobId, img, settings, methodId, params, output, stagePrefix = '' }) {
+  const method = byId(methodId);
+  const tag = (stage) => (stagePrefix ? `${stagePrefix}: ${stage}` : stage);
+
+  progress(jobId, tag('preparing'));
   const ctx = prepare(img, settings);
 
-  progress(jobId, 'placing strokes');
+  progress(jobId, tag('placing strokes'));
   const args = { ...ctx, ...params };
   takeNote();                       // clear anything a previous job left behind
   const linesPx = method.run(args);
@@ -136,19 +157,19 @@ function runJob({ jobId, img, settings, methodId, params, output }) {
 
   const travelRaw = travelLength(lines);
   if (output.optimizePath) {
-    progress(jobId, 'ordering paths');
+    progress(jobId, tag('ordering paths'));
     lines = optimizeOrder(lines);
     lines = joinCoincidentLines(lines, joinTolerance);
   }
   if (output.simplifyPath) {
-    progress(jobId, 'simplifying');
+    progress(jobId, tag('simplifying'));
     lines = simplifyAll(lines, simplifyLength);
   }
 
   // Render what will be plotted, after the path work rather than before it:
   // joining and simplification both move geometry, so rendering the method's raw
   // output would preview and score something the exported SVG does not contain.
-  progress(jobId, 'rendering');
+  progress(jobId, tag('rendering'));
   const previewScale = output.previewScale ?? 2;
   // Cap the internal supersampled buffer: outScale*superSample squared can get
   // very large at high detail settings, and the area-average downsample is what
@@ -164,7 +185,7 @@ function runJob({ jobId, img, settings, methodId, params, output }) {
     outScale: previewScale, superSample,
   });
 
-  progress(jobId, 'measuring');
+  progress(jobId, tag('measuring'));
   const drawnCm = pathLength(lines);
   const travelCm = travelLength(lines);
   const points = lines.reduce((a, l) => a + l.length, 0);
@@ -230,4 +251,32 @@ function runJob({ jobId, img, settings, methodId, params, output }) {
     payload,
     transfer: [source.data.buffer, rendered.data.buffer, diff.data.buffer],
   };
+}
+
+/**
+ * Same method, run once per C/M/Y/K plane. Each plane comes out of
+ * fromImageDataCMYK as a coverage image (0 = no ink); invert() flips it to the
+ * 0=ink convention every method and prepare() assume, then runOneChannel does
+ * the rest exactly as the single-ink path does, one channel at a time.
+ *
+ * All four channels share one settings/params/methodId -- no per-channel screen
+ * angle -- so this is a plain loop, not a redesign of runOneChannel.
+ */
+function runJobCMYK({ jobId, imgRGBA, settings, methodId, params, output, gcr = 1 }) {
+  const { c, m, y, k } = fromImageDataCMYK(imgRGBA, gcr);
+  const names = ['C', 'M', 'Y', 'K'];
+  const planes = [c, m, y, k];
+
+  const channels = [];
+  const transfer = [];
+  for (let i = 0; i < 4; i++) {
+    const { payload, transfer: t } = runOneChannel({
+      jobId, img: invert(planes[i]), settings, methodId, params, output,
+      stagePrefix: names[i],
+    });
+    channels.push({ name: names[i], ...payload });
+    transfer.push(...t);
+  }
+
+  return { payload: { channels }, transfer };
 }

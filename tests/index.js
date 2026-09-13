@@ -49,6 +49,7 @@ import * as dashHatching from './method.dashHatching.js';       // new — dashe
 import * as dashedStreamlines from './method.dashedStreamlines.js'; // new — dashed streamlines
 import * as spineDash from './spine.dash.js';                   // new — the stadium area law
 import * as segmentStipple from './method.segmentStipple.js';   // new — short-stroke stipple
+import * as spineCmyk from './spine.cmyk.js';                   // new — CMYK decomposition + invert + SVG layers
 
 export const SECTIONS = [
   ['hatching', hatching],
@@ -92,6 +93,7 @@ export const SECTIONS = [
   ['dashedStreamlines', dashedStreamlines],
   ['spine.dash', spineDash],
   ['segmentStipple', segmentStipple],
+  ['spine.cmyk', spineCmyk],
 ];
 
 /**

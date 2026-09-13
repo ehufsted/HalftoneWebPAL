@@ -3,7 +3,7 @@
 
 import { METHODS, METHOD_GROUPS, byId, blurbOf, defaultsFor } from './methods/index.js';
 import { toSVG, downloadSVG } from './spine/svg.js';
-import { fromImageData } from './shim/image.js';
+import { fromImageData, invert } from './shim/image.js';
 import { toPixels } from './spine/units.js';
 import { renderStrokes } from './spine/render.js';
 
@@ -18,13 +18,27 @@ const $ = (id) => document.getElementById(id);
  */
 let imageEpoch = 0;
 
+/** Approximate process colours, for CMYK layer strokes and preview compositing. */
+const CMYK_COLORS = ['#00AEEF', '#EC008C', '#FFF200', '#000000'];
+const CMYK_NAMES = ['Cyan', 'Magenta', 'Yellow', 'Black'];
+
 const state = {
-  image: null,          // {w,h,data} greyscale
+  image: null,          // {w,h,data} greyscale, already inverted if invertInk is set
+  rawImage: null,        // {w,h,data} greyscale, as loaded -- never inverted
+  rawRGBA: null,          // {width,height,data} raw source, for CMYK decomposition
   imageName: 'drawing',
   methodId: METHODS[0].id,
   params: defaultsFor(METHODS[0]),
   view: 'result',
   showTravel: false,
+  inkMode: 'single',      // 'single' | 'cmyk'
+  invertInk: false,       // single-ink mode only: white ink on a black page
+  // The last 'done' message from the worker. Single-ink is flat
+  // ({lines, stats, meta, images, note}); CMYK is {channels: [that shape, x4]}.
+  // Every reader below (paint, updateStats, doExport, doExportPng) branches on
+  // `.channels` rather than the two being normalised to one shape, because the
+  // shapes really do differ downstream -- a travel overlay and a Difference
+  // view mean something different for four rasters than for one.
   result: null,
   jobId: 0,
   pending: false,
@@ -111,16 +125,23 @@ function readOutput() {
 
 function run() {
   if (!state.image || !worker) return;
+  if (state.inkMode === 'cmyk' && !state.rawRGBA) return;
   // Anything still running is answering a question that has already changed.
   cancelInFlight();
   if (!worker) return;                 // respawn failed; the status line says so
   state.jobId++;
   state.pending = true;
   setStatus('working…');
+  // Only the plane the chosen mode actually reads goes over: sending both
+  // would structured-clone a second multi-megabyte buffer on every debounced
+  // run for nothing.
   worker.postMessage({
     type: 'run',
     jobId: state.jobId,
-    img: state.image,
+    mode: state.inkMode,
+    ...(state.inkMode === 'cmyk'
+      ? { imgRGBA: state.rawRGBA, gcr: parseFloat($('gcr').value) }
+      : { img: state.image }),
     settings: readSettings(),
     methodId: state.methodId,
     params: state.params,
@@ -136,52 +157,62 @@ function scheduleRun(delay = 180) {
 }
 
 // ------------------------------------------------------------------- paint
-function paint() {
-  const res = state.result;
-  const canvas = $('view');
-  const overlay = $('overlay');
-  if (!res) return;
+/**
+ * Size the view/overlay canvases to the image and fit the stage without
+ * exceeding natural size too much. Shared by paint() and paintCMYK(), which
+ * otherwise draw entirely different pixels but must land on the same box.
+ */
+function fitStage(canvas, overlay, w, h) {
+  canvas.width = w;
+  canvas.height = h;
+  overlay.width = w;
+  overlay.height = h;
 
-  const img = state.view === 'source' ? res.images.source
-            : state.view === 'diff' ? res.images.diff
-            : res.images.result;
-
-  canvas.width = img.w;
-  canvas.height = img.h;
-  overlay.width = img.w;
-  overlay.height = img.h;
-
-  // fit the stage without exceeding natural size too much
   const stage = document.querySelector('.stage');
   const maxW = stage.clientWidth - 28;
   const maxH = stage.clientHeight - 28;
-  const scale = Math.min(maxW / img.w, maxH / img.h, 2);
-  const cssW = Math.max(1, Math.floor(img.w * scale));
-  const cssH = Math.max(1, Math.floor(img.h * scale));
+  const scale = Math.min(maxW / w, maxH / h, 2);
+  const cssW = Math.max(1, Math.floor(w * scale));
+  const cssH = Math.max(1, Math.floor(h * scale));
   for (const c of [canvas, overlay]) {
     c.style.width = `${cssW}px`;
     c.style.height = `${cssH}px`;
   }
   $('wrap').style.width = `${cssW}px`;
   $('wrap').style.height = `${cssH}px`;
+}
+
+function paint() {
+  const res = state.result;
+  const canvas = $('view');
+  const overlay = $('overlay');
+  if (!res) return;
+
+  if (res.channels) { paintCMYK(res, canvas, overlay); return; }
+
+  const img = state.view === 'source' ? res.images.source
+            : state.view === 'diff' ? res.images.diff
+            : res.images.result;
+
+  fitStage(canvas, overlay, img.w, img.h);
 
   const ctx = canvas.getContext('2d');
   const out = ctx.createImageData(img.w, img.h);
   if (state.view === 'diff') {
     // diverging map: red = too dark, blue = too light, white = on target
     for (let i = 0, p = 0; i < img.data.length; i++, p += 4) {
-      const e = Math.max(-0.3, Math.min(0.3, img.data[i])) / 0.3;
-      const a = Math.abs(e);
-      if (e > 0) { // rendered lighter than target
-        out.data[p] = 255 * (1 - a); out.data[p + 1] = 255 * (1 - a * 0.55); out.data[p + 2] = 255;
-      } else {
-        out.data[p] = 255; out.data[p + 1] = 255 * (1 - a * 0.65); out.data[p + 2] = 255 * (1 - a * 0.65);
-      }
+      const [r, g, b] = divergingColor(img.data[i]);
+      out.data[p] = r; out.data[p + 1] = g; out.data[p + 2] = b;
       out.data[p + 3] = 255;
     }
   } else {
+    // The rendered raster stays in ink-space (0=ink) regardless of invertInk --
+    // only the display mapping flips, so white ink on a black page previews the
+    // way it will plot.
     for (let i = 0, p = 0; i < img.data.length; i++, p += 4) {
-      const v = Math.max(0, Math.min(1, img.data[i])) * 255;
+      let v = Math.max(0, Math.min(1, img.data[i]));
+      if (state.invertInk) v = 1 - v;
+      v *= 255;
       out.data[p] = out.data[p + 1] = out.data[p + 2] = v;
       out.data[p + 3] = 255;
     }
@@ -189,6 +220,82 @@ function paint() {
   ctx.putImageData(out, 0, 0);
 
   paintTravel(overlay, img);
+}
+
+/** #rrggbb -> [r,g,b] in 0-255. */
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * The Difference view's diverging map: red = too dark, blue = too light, white
+ * = on target. Shared by paint() and paintCMYK() so the two Difference views
+ * read as the same scale -- a change to the colours or the +-0.3 clip only
+ * has to be made once.
+ */
+function divergingColor(e) {
+  e = Math.max(-0.3, Math.min(0.3, e)) / 0.3;
+  const a = Math.abs(e);
+  return e > 0 // rendered lighter than target
+    ? [255 * (1 - a), 255 * (1 - a * 0.55), 255]
+    : [255, 255 * (1 - a * 0.65), 255 * (1 - a * 0.65)];
+}
+
+/**
+ * CMYK preview: subtractively composite the four channel rasters (each
+ * 0=ink/1=paper, same convention as single-ink) into one RGB image, using each
+ * channel's process colour. An approximation -- real subtractive mixing is not
+ * the point here, just a plausible on-screen stand-in for four pens overprinted
+ * on white stock.
+ */
+function paintCMYK(res, canvas, overlay) {
+  const channels = res.channels;
+  const pick = (ch) => state.view === 'source' ? ch.images.source
+              : state.view === 'diff' ? ch.images.diff
+              : ch.images.result;
+  const first = pick(channels[0]);
+
+  fitStage(canvas, overlay, first.w, first.h);
+
+  const ctx = canvas.getContext('2d');
+  const out = ctx.createImageData(first.w, first.h);
+  const planes = channels.map(pick);
+
+  if (state.view === 'diff') {
+    // Composite error: the worst-magnitude channel at each pixel, sign kept,
+    // same diverging red/blue map as the single-ink Difference view. Averaging
+    // the four signed errors instead would let an over-inked channel and an
+    // under-inked one cancel out and paint a badly-registered pixel white.
+    for (let i = 0, p = 0; i < first.data.length; i++, p += 4) {
+      let e = 0;
+      for (const pl of planes) if (Math.abs(pl.data[i]) > Math.abs(e)) e = pl.data[i];
+      const [r, g, b] = divergingColor(e);
+      out.data[p] = r; out.data[p + 1] = g; out.data[p + 2] = b;
+      out.data[p + 3] = 255;
+    }
+  } else {
+    const cmykRgb = CMYK_COLORS.map(hexToRgb);
+    for (let i = 0, p = 0; i < first.data.length; i++, p += 4) {
+      let r = 255, g = 255, b = 255;
+      for (let ci = 0; ci < 4; ci++) {
+        const ink = 1 - Math.max(0, Math.min(1, planes[ci].data[i]));
+        const [cr, cg, cb] = cmykRgb[ci];
+        r -= ink * (255 - cr);
+        g -= ink * (255 - cg);
+        b -= ink * (255 - cb);
+      }
+      out.data[p] = Math.max(0, Math.min(255, r));
+      out.data[p + 1] = Math.max(0, Math.min(255, g));
+      out.data[p + 2] = Math.max(0, Math.min(255, b));
+      out.data[p + 3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+
+  // Pen-up travel is per-channel in CMYK mode; the overlay has no single line
+  // sequence to draw, so it stays blank there.
+  overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
 }
 
 function paintTravel(overlay, img) {
@@ -210,10 +317,27 @@ function paintTravel(overlay, img) {
   ctx.stroke();
 }
 
+/**
+ * Sum the four channels' stats into one flat object shaped like a single-ink
+ * run's, so the rest of updateStats doesn't need to know CMYK exists. Fidelity
+ * (rms/reach) is averaged rather than summed -- it's a percentage, not a count.
+ */
+function combineCMYKStats(channels) {
+  const sum = (k) => channels.reduce((a, ch) => a + ch.stats[k], 0);
+  const avg = (k) => sum(k) / channels.length;
+  return {
+    drawnCm: sum('drawnCm'), travelCm: sum('travelCm'), travelRawCm: sum('travelRawCm'),
+    paths: sum('paths'), points: sum('points'),
+    rms: avg('rms'), maxErr: Math.max(...channels.map((ch) => ch.stats.maxErr)),
+    reach: avg('reach'), clippedFraction: avg('clippedFraction'),
+  };
+}
+
 function updateStats() {
   const r = state.result;
   if (!r) return;
-  const { drawnCm, travelCm, travelRawCm, paths, points, rms, reach, clippedFraction } = r.stats;
+  const stats = r.channels ? combineCMYKStats(r.channels) : r.stats;
+  const { drawnCm, travelCm, travelRawCm, paths, points, rms, reach, clippedFraction } = stats;
   const speed = Math.max(1, parseFloat($('penSpeed').value) || 4);
   const seconds = drawnCm / speed + travelCm / (speed * 3);
   const mins = Math.floor(seconds / 60);
@@ -242,7 +366,9 @@ function updateStats() {
   // The method's own account of the run, if it gave one. It sits beside the tone
   // error because for a method that can stop early the error alone does not say
   // whether the drawing is short of its target or finished ahead of budget.
-  $('methodNote').textContent = r.note || '';
+  $('methodNote').textContent = r.channels
+    ? r.channels.map((ch) => ch.note).filter(Boolean).join(' · ')
+    : r.note || '';
 
   // Reach: how much of the requested tone this method cannot express at all — a
   // property of the method and the settings rather than a fault in the drawing,
@@ -265,7 +391,12 @@ function loadFromImageBitmapSource(src, name) {
   c.height = Math.max(1, Math.round(src.height * scale));
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(src, 0, 0, c.width, c.height);
-  state.image = fromImageData(ctx.getImageData(0, 0, c.width, c.height));
+  // A fresh buffer from getImageData, read nowhere else, so it can be handed
+  // straight to rawRGBA rather than copied.
+  const imgData = ctx.getImageData(0, 0, c.width, c.height);
+  state.rawRGBA = { width: imgData.width, height: imgData.height, data: imgData.data };
+  state.rawImage = fromImageData(imgData);
+  state.image = state.invertInk ? invert(state.rawImage) : state.rawImage;
   state.imageName = safeStem(name);
   imageEpoch++;
   run();
@@ -331,24 +462,52 @@ function loadPreset(kind, fallback = null) {
   img.src = src;
 }
 
+/** h in degrees, s/l in [0,1]. Returns [r,g,b] in [0,255]. */
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0]
+    : h < 120 ? [x, c, 0]
+    : h < 180 ? [0, c, x]
+    : h < 240 ? [0, x, c]
+    : h < 300 ? [x, 0, c]
+    : [c, 0, x];
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+}
+
 /**
  * The formula presets. Three of the four samples are generated rather than
  * bundled, so they cost nothing to ship and raise no licensing question; `rhino`
  * is the one real photograph, it is the author's own, and it is there because a
  * procedural test card cannot show how a method handles a subject.
+ *
+ * `state.rawImage` (single-ink's input) is grey, exactly as before -- `ramp` in
+ * particular is a plain monotonic gradient people use to eyeball gamma, and
+ * colourising IT would cost that. Only `state.rawRGBA` (CMYK's input) gets a
+ * hue on top, at lightness = the same grey value, so single-ink mode is
+ * unaffected and CMYK mode gets a real colour image to decompose instead of one
+ * that collapses to K alone (r=g=b everywhere is exactly the degenerate case
+ * `spine.cmyk.js`'s "grey photo" test exists to catch).
  */
 function sample(kind) {
   const w = 700, h = 700;
   const data = new Float32Array(w * h);
+  const rgba = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const nx = (x / (w - 1)) * 2 - 1, ny = (y / (h - 1)) * 2 - 1;
-      let v;
+      let v, hue, sat;
       if (kind === 'ramp') {
         v = x / (w - 1);
+        hue = 300 * v;                                    // a rainbow sweep, left to right
+        sat = 0.95;
       } else if (kind === 'rings') {
         const r = Math.hypot(nx, ny);
         v = 0.5 + 0.45 * Math.cos(r * 18) * Math.exp(-r * 0.8);
+        hue = (Math.atan2(ny, nx) * 180) / Math.PI;         // a colour wheel by angle
+        sat = 0.95;
       } else { // sphere: lit ball on a graded ground
         const r = Math.hypot(nx, ny);
         if (r < 0.72) {
@@ -357,14 +516,22 @@ function sample(kind) {
           const nlen = Math.hypot(nx, ny, z * 0.72) || 1;
           const dot = (nx * lx + ny * ly + z * 0.72 * lz) / nlen;
           v = Math.max(0.02, Math.min(1, 0.12 + 0.95 * Math.max(0, dot)));
+          hue = 25; sat = 0.95;                             // a warm ball
         } else {
           v = 0.55 + 0.4 * (y / (h - 1)) - 0.12 * Math.exp(-((r - 0.72) ** 2) * 12);
+          hue = 205; sat = 0.6;                             // on a cool ground
         }
       }
-      data[y * w + x] = Math.max(0, Math.min(1, v));
+      const i = y * w + x;
+      data[i] = Math.max(0, Math.min(1, v));
+      const [rr, gg, bb] = hslToRgb(hue, sat, data[i]);
+      const p = i * 4;
+      rgba[p] = rr; rgba[p + 1] = gg; rgba[p + 2] = bb; rgba[p + 3] = 255;
     }
   }
-  state.image = { w, h, data };
+  state.rawImage = { w, h, data };
+  state.rawRGBA = { width: w, height: h, data: rgba };
+  state.image = state.invertInk ? invert(state.rawImage) : state.rawImage;
   state.imageName = `sample-${kind}`;
   imageEpoch++;
   run();
@@ -692,6 +859,9 @@ function syncHash() {
     m: state.methodId,
     w: s.drawingWidth, p: (s.penWidth * 10).toFixed(2), d: s.pxPerCm,
     g: s.gamma, sm: s.rSmooth,
+    ink: state.inkMode,
+    gcr: $('gcr').value,
+    ...(state.invertInk ? { inv: '1' } : {}),
     ...Object.fromEntries(Object.entries(state.params).map(([k, v]) => [`x_${k}`, v])),
   });
   // A sandboxed iframe — which is how itch.io embeds the page — throws
@@ -729,6 +899,8 @@ function restoreHash() {
   if (!location.hash.length) return;
   const q = new URLSearchParams(location.hash.slice(1));
   if (q.get('m') && METHODS.some((m) => m.id === q.get('m'))) state.methodId = q.get('m');
+  if (q.get('ink') === 'cmyk' || q.get('ink') === 'single') state.inkMode = q.get('ink');
+  state.invertInk = q.get('inv') === '1';
 
   // Rebase the params onto the method the hash names. `state.params` starts as
   // METHODS[0]'s defaults, and carrying those keys across would leave the new
@@ -741,6 +913,7 @@ function restoreHash() {
   setNumIf(q, 'pxPerCm', 'd');
   setNumIf(q, 'gamma', 'g');
   setNumIf(q, 'rSmooth', 'sm');
+  setNumIf(q, 'gcr', 'gcr');
   const method = byId(state.methodId);
   for (const p of method.params) {
     const v = q.get(`x_${p.key}`);
@@ -766,10 +939,27 @@ function restoreHash() {
 function doExport() {
   const r = state.result;
   if (!r) return;
-  const svg = toSVG([{ name: byId(state.methodId).label, lines: r.lines }], {
+
+  if (r.channels) {
+    const meta = r.channels[0].meta;      // shared: same settings for every channel
+    const layers = r.channels.map((ch, i) => ({
+      name: CMYK_NAMES[i], lines: ch.lines, color: CMYK_COLORS[i],
+    }));
+    const svg = toSVG(layers, {
+      widthCm: meta.drawingWidth, heightCm: meta.drawingHeight, penWidthCm: meta.penWidth,
+    });
+    downloadSVG(svg, `${state.imageName}-cmyk.svg`);
+    return;
+  }
+
+  const svg = toSVG([{
+    name: byId(state.methodId).label, lines: r.lines,
+    color: state.invertInk ? '#ffffff' : '#000000',
+  }], {
     widthCm: r.meta.drawingWidth,
     heightCm: r.meta.drawingHeight,
     penWidthCm: r.meta.penWidth,
+    background: state.invertInk ? '#000000' : undefined,
   });
   downloadSVG(svg, `${state.imageName}-${state.methodId}.svg`);
 }
@@ -789,7 +979,9 @@ function imageToCanvas(img) {
   const g = c.getContext('2d');
   const out = g.createImageData(img.w, img.h);
   for (let i = 0, p = 0; i < img.data.length; i++, p += 4) {
-    const v = Math.round(255 * Math.min(1, Math.max(0, img.data[i])));
+    let vv = Math.min(1, Math.max(0, img.data[i]));
+    if (state.invertInk) vv = 1 - vv;
+    const v = Math.round(255 * vv);
     out.data[p] = v; out.data[p + 1] = v; out.data[p + 2] = v;
     out.data[p + 3] = 255;
   }
@@ -804,14 +996,16 @@ function imageToCanvas(img) {
  * supersamples and area-averages where the browser would apply its own
  * antialiasing, and an exported PNG that disagreed with the tone numbers would
  * be worse than no export at all. Source and Difference are pixel data with
- * nothing to re-render, so those come off the canvas as they are.
+ * nothing to re-render, so those come off the canvas as they are. CMYK mode has
+ * no single `lines`/`meta` to re-render against, so its Result view is also
+ * screenshotted, from the same composite `paint()` already drew.
  */
 function doExportPng() {
   const r = state.result;
   if (!r) return;
   let canvas;
   const suffix = state.view;
-  if (state.view === 'result') {
+  if (state.view === 'result' && !r.channels) {
     // The lines arrive in centimetres — worker.js converts with toPhysical
     // before posting, since that is what the SVG export and length stats want —
     // so they must go back to pixels before the renderer sees them.
@@ -853,13 +1047,35 @@ function bindRange(id, valId, fmt = (v) => v) {
   update();
 }
 
+/**
+ * White-on-black and CMYK are separate output modes (mixing them would need
+ * subtractive mixing on a dark substrate, which isn't modelled here) -- the
+ * invert checkbox is disabled and its effect suspended while CMYK is active,
+ * and the GCR slider goes the other way: it means nothing outside CMYK, so it
+ * is disabled while single-ink is active. Shared by init() (setting up the
+ * controls from restored state) and the inkMode change handler (reacting to a
+ * live switch), so the two cannot disagree.
+ */
+function updateInkModeUI() {
+  const cmyk = state.inkMode === 'cmyk';
+  $('invertInk').disabled = cmyk;
+  $('invertInkRow').style.opacity = cmyk ? 0.5 : 1;
+  $('gcr').disabled = !cmyk;
+  $('gcrRow').style.opacity = cmyk ? 1 : 0.5;
+}
+
 function init() {
   restoreHash();
   buildMethodUI();
 
+  $('inkMode').value = state.inkMode;
+  $('invertInk').checked = state.invertInk;
+  updateInkModeUI();
+
   bindRange('pxPerCm', 'pxPerCmVal');
   bindRange('gamma', 'gammaVal', (v) => parseFloat(v).toFixed(2));
   bindRange('rSmooth', 'rSmoothVal', (v) => parseFloat(v).toFixed(1));
+  bindRange('gcr', 'gcrVal', (v) => parseFloat(v).toFixed(2));
 
   for (const id of ['paper', 'penWidth', 'optimizePath', 'simplifyPath']) {
     $(id).addEventListener('change', () => {
@@ -870,6 +1086,18 @@ function init() {
     });
   }
   $('penSpeed').addEventListener('input', updateStats);
+
+  $('invertInk').addEventListener('change', (e) => {
+    state.invertInk = e.target.checked;
+    if (state.rawImage) state.image = state.invertInk ? invert(state.rawImage) : state.rawImage;
+    scheduleRun(0);
+  });
+
+  $('inkMode').addEventListener('change', (e) => {
+    state.inkMode = e.target.value;
+    updateInkModeUI();
+    scheduleRun(0);
+  });
 
   $('method').addEventListener('change', (e) => {
     state.methodId = e.target.value;

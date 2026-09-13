@@ -246,6 +246,26 @@
       <p class="note">Detail is pixels per cm — the resolution the method works at.</p>
     </fieldset>
 
+    <fieldset>
+      <legend>Ink</legend>
+      <div class="row">
+        <label for="inkMode">Mode</label>
+        <select id="inkMode">
+          <option value="single" selected>Single ink</option>
+          <option value="cmyk">CMYK · 4 layers</option>
+        </select>
+      </div>
+      <label class="check" id="invertInkRow">
+        <input type="checkbox" id="invertInk"> White ink on black page
+      </label>
+      <div class="row" id="gcrRow">
+        <label for="gcr">Black gen.</label>
+        <input type="range" id="gcr" min="0" max="1" step="0.05" value="1">
+        <span class="val" id="gcrVal">1.00</span>
+      </div>
+      <p class="note">CMYK splits the image into cyan/magenta/yellow/black layers, one halftone pass each — for hand-registered multi-pen plots. Not combined with white-on-black. Black gen. (GCR) trades richer, more saturated shadows (0) for shadows that print through the black pen alone (1) — pure black is easier to register than three overprinted pens.</p>
+    </fieldset>
+
     <fieldset class="tone">
       <legend>Tone</legend>
       <div class="row">
